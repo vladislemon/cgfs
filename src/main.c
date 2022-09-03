@@ -1,5 +1,19 @@
 #include <stdio.h>
 #include "socket.h"
+#include "thread.h"
+#include "mutex.h"
+
+const char *message = "Some message";
+
+Mutex mutex;
+
+void *second_thread_entry_point(void *arg) {
+    printf("%s\n", (const char *) arg);
+    mutex_lock(&mutex);
+    printf("Mutex locked in second thread\n");
+    mutex_unlock(&mutex);
+    thread_exit(12345);
+}
 
 int main() {
 #ifdef _WIN32
@@ -14,5 +28,19 @@ int main() {
     socket_shutdown(sock, SHUT_RDWR);
     socket_close(sock);
     socket_global_destroy();
+
+    mutex_init(&mutex);
+    Thread thread = thread_create(second_thread_entry_point, (void *) message);
+
+    mutex_lock(&mutex);
+    printf("Mutex locked in main thread\n");
+    mutex_unlock(&mutex);
+
+    usize thread_result;
+    thread_join(thread, &thread_result);
+    printf("%llu\n", thread_result);
+
+    mutex_destroy(&mutex);
+
     return 0;
 }
