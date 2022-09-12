@@ -8,7 +8,7 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.c)
 add_executable(cgfs ${SOURCES})
 
 if (UNIX)
-    target_link_libraries(cgfs GL)
+    target_link_libraries(cgfs xcb)
 endif (UNIX)
 if (WIN32)
     target_link_libraries(cgfs WS2_32)

@@ -3,6 +3,7 @@
 #include "socket.h"
 #include "thread.h"
 #include "mutex.h"
+#include "window.h"
 
 const char *message = "Some message";
 
@@ -39,6 +40,12 @@ int cgfs_start() {
     printf("%llu\n", thread_result);
 
     mutex_destroy(&mutex);
+
+    Window window = window_create(800, 600, "Hello from window");
+    while (!window_is_close_requested(window)) {
+        window_global_wait_events();
+    }
+    window_destroy(window);
 
     return 0;
 }
