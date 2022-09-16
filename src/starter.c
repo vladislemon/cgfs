@@ -13,7 +13,9 @@ void *second_thread_entry_point(void *arg) {
     printf("%s\n", (const char *) arg);
     mutex_lock(&mutex);
     printf("Mutex locked in second thread\n");
+    thread_sleep(1000);
     mutex_unlock(&mutex);
+    printf("Mutex unlocked in second thread\n");
     thread_exit(12345);
 }
 
@@ -33,7 +35,9 @@ int cgfs_start() {
 
     mutex_lock(&mutex);
     printf("Mutex locked in main thread\n");
+    thread_sleep(1000);
     mutex_unlock(&mutex);
+    printf("Mutex unlocked in main thread\n");
 
     usize thread_result;
     thread_join(thread, &thread_result);

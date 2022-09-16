@@ -15,4 +15,6 @@ void thread_join(Thread thread, usize *result_holder);
 
 void thread_exit(usize result);
 
+void thread_sleep(u64 millis);
+
 #endif //CGFS_THREAD_H

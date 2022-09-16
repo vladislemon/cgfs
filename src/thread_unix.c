@@ -1,5 +1,6 @@
 #ifndef _WIN32
 
+#include <time.h>
 #include "thread_unix.h"
 #include "types.h"
 
@@ -18,6 +19,13 @@ void thread_join(Thread thread, usize *result_holder) {
 
 void thread_exit(usize result) {
     pthread_exit((void *) result);
+}
+
+void thread_sleep(u64 millis) {
+    struct timespec ts;
+    ts.tv_sec = millis / 1000;
+    ts.tv_nsec = (millis % 1000) * 1000000;
+    nanosleep(&ts, NULL);
 }
 
 #endif

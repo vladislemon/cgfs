@@ -18,4 +18,8 @@ void thread_exit(usize result) {
     ExitThread(result);
 }
 
+void thread_sleep(u64 millis) {
+    Sleep(millis);
+}
+
 #endif
