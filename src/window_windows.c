@@ -1,3 +1,5 @@
+#ifdef _WIN32
+
 #include "window_windows.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -124,3 +126,5 @@ bool window_is_close_requested(Window window) {
     }
     return window_windows_windows_data[window].close_requested;
 }
+
+#endif
