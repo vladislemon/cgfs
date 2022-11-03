@@ -1,6 +1,6 @@
 #ifdef _WIN32
 
-#include "window_windows.h"
+#include "window_win32.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
@@ -14,20 +14,20 @@ typedef struct window_data_s {
     bool close_requested;
 } WindowData;
 
-HINSTANCE window_windows_module_handle = 0;
-Window window_windows_window_count = 0;
-WindowData *window_windows_windows_data = 0;
+HINSTANCE window_win32_module_handle = 0;
+Window window_win32_window_count = 0;
+WindowData *window_win32_windows_data = 0;
 
-Window window_windows_get_window_by_handle(HWND handle) {
-    for (u32 i = 0; i < window_windows_window_count; i++) {
-        if (window_windows_windows_data[i].handle == handle) {
+Window window_win32_get_window_by_handle(HWND handle) {
+    for (u32 i = 0; i < window_win32_window_count; i++) {
+        if (window_win32_windows_data[i].handle == handle) {
             return i;
         }
     }
     return INVALID_WINDOW;
 }
 
-bool window_windows_handle_message(MSG *message, int status) {
+bool window_win32_handle_message(MSG *message, int status) {
     if (status == 0) {
         return false;
     } else if (status == -1) {
@@ -42,20 +42,20 @@ bool window_windows_handle_message(MSG *message, int status) {
 
 void window_global_poll_events() {
     MSG message;
-    while (window_windows_handle_message(&message, PeekMessage(&message, NULL, 0, 0, PM_REMOVE)));
+    while (window_win32_handle_message(&message, PeekMessage(&message, NULL, 0, 0, PM_REMOVE)));
 }
 
 void window_global_wait_events() {
     MSG message;
-    window_windows_handle_message(&message, GetMessage(&message, NULL, 0, 0));
+    window_win32_handle_message(&message, GetMessage(&message, NULL, 0, 0));
     window_global_poll_events();
 }
 
-LRESULT CALLBACK window_windows_window_function(HWND handle, UINT message, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK window_win32_window_function(HWND handle, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
         case WM_CLOSE: {
-            Window window = window_windows_get_window_by_handle(handle);
-            window_windows_windows_data[window].close_requested = true;
+            Window window = window_win32_get_window_by_handle(handle);
+            window_win32_windows_data[window].close_requested = true;
             break;
         }
         case WM_PAINT: {
@@ -70,20 +70,20 @@ LRESULT CALLBACK window_windows_window_function(HWND handle, UINT message, WPARA
 }
 
 Window window_create(u16 width, u16 height, const char *title) {
-    if (window_windows_window_count == MAX_WINDOW_COUNT) {
+    if (window_win32_window_count == MAX_WINDOW_COUNT) {
         return INVALID_WINDOW;
     }
-    if (window_windows_window_count == 0) {
-        window_windows_module_handle = GetModuleHandle(NULL);
-        window_windows_windows_data = malloc(sizeof(WindowData) * MAX_WINDOW_COUNT);
+    if (window_win32_window_count == 0) {
+        window_win32_module_handle = GetModuleHandle(NULL);
+        window_win32_windows_data = malloc(sizeof(WindowData) * MAX_WINDOW_COUNT);
     }
-    WindowData *window_data = &window_windows_windows_data[window_windows_window_count];
+    WindowData *window_data = &window_win32_windows_data[window_win32_window_count];
     window_data->class.cbSize = sizeof(WNDCLASSEX);
     window_data->class.style = CS_HREDRAW | CS_VREDRAW;
-    window_data->class.lpfnWndProc = window_windows_window_function;
+    window_data->class.lpfnWndProc = window_win32_window_function;
     window_data->class.cbClsExtra = 0;
     window_data->class.cbWndExtra = 0;
-    window_data->class.hInstance = window_windows_module_handle;
+    window_data->class.hInstance = window_win32_module_handle;
     window_data->class.hIcon = NULL;
     window_data->class.hCursor = LoadCursor(NULL, IDC_ARROW);
     window_data->class.hbrBackground = (HBRUSH) GetStockObject(BLACK_BRUSH);
@@ -100,31 +100,31 @@ Window window_create(u16 width, u16 height, const char *title) {
             width, height,
             NULL,
             NULL,
-            window_windows_module_handle,
+            window_win32_module_handle,
             NULL
     );
     window_data->close_requested = false;
     ShowWindow(window_data->handle, SW_SHOW);
-    return window_windows_window_count++;
+    return window_win32_window_count++;
 }
 
 void window_destroy(Window window) {
-    if (window >= window_windows_window_count) {
+    if (window >= window_win32_window_count) {
         return;
     }
-    DestroyWindow(window_windows_windows_data[window].handle);
-    window_windows_window_count--;
-    if (window_windows_window_count == 0) {
-        free(window_windows_windows_data);
-        window_windows_windows_data = 0;
+    DestroyWindow(window_win32_windows_data[window].handle);
+    window_win32_window_count--;
+    if (window_win32_window_count == 0) {
+        free(window_win32_windows_data);
+        window_win32_windows_data = 0;
     }
 }
 
 bool window_is_close_requested(Window window) {
-    if (window >= window_windows_window_count) {
+    if (window >= window_win32_window_count) {
         return false;
     }
-    return window_windows_windows_data[window].close_requested;
+    return window_win32_windows_data[window].close_requested;
 }
 
 #endif

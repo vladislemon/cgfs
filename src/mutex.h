@@ -4,9 +4,9 @@
 #include "thread.h"
 
 #ifdef _WIN32
-#include "mutex_windows.h"
+#include "mutex_win32.h"
 #else
-#include "mutex_unix.h"
+#include "mutex_pthread.h"
 #endif
 
 int mutex_init(Mutex *mutex);

@@ -1,7 +1,7 @@
 #ifndef _WIN32
 
 #include <time.h>
-#include "thread_unix.h"
+#include "thread_pthread.h"
 #include "types.h"
 
 Thread thread_create(void *(*entry_point)(void *), void *arg) {

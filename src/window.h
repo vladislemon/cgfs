@@ -2,9 +2,9 @@
 #define CGFS_WINDOW_H
 
 #ifdef _WIN32
-#include "window_windows.h"
+#include "window_win32.h"
 #else
-#include "window_unix.h"
+#include "window_xcb.h"
 #endif
 
 #include "types.h"

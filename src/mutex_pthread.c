@@ -1,6 +1,6 @@
 #ifndef _WIN32
 
-#include "mutex_unix.h"
+#include "mutex_pthread.h"
 
 int mutex_init(Mutex *mutex) {
     return pthread_mutex_init(mutex, 0);

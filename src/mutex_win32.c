@@ -1,6 +1,6 @@
 #ifdef _WIN32
 
-#include "mutex_windows.h"
+#include "mutex_win32.h"
 
 int mutex_init(Mutex *mutex) {
     InitializeCriticalSection(mutex);

@@ -1,6 +1,6 @@
 #ifdef _WIN32
 
-#include "thread_windows.h"
+#include "thread_win32.h"
 #include "types.h"
 
 Thread thread_create(void *(*entry_point)(void *), void *arg) {

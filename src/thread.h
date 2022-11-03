@@ -4,9 +4,9 @@
 #include "types.h"
 
 #ifdef _WIN32
-#include "thread_windows.h"
+#include "thread_win32.h"
 #else
-#include "thread_unix.h"
+#include "thread_pthread.h"
 #endif
 
 Thread thread_create(void *(*entry_point)(void *), void *arg);
