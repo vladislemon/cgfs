@@ -4,12 +4,20 @@
 #include <stdio.h>
 #include <string.h>
 #include <xcb/xcb.h>
+#include <vulkan/vulkan_core.h>
+#include <vulkan/vulkan_xcb.h>
 #include "window_xcb.h"
 
 #define INVALID_WINDOW 0xFFFFFFFF
 #define MAX_WINDOW_COUNT 8
 #define DELETE_COOKIE_NAME "WM_DELETE_WINDOW"
 #define PROTOCOLS_COOKIE_NAME "WM_PROTOCOLS"
+#define REQUIRED_VULKAN_EXTENSION_COUNT 2
+
+const char *const window_required_vulkan_extensions[REQUIRED_VULKAN_EXTENSION_COUNT] = {
+        VK_KHR_SURFACE_EXTENSION_NAME,
+        VK_KHR_XCB_SURFACE_EXTENSION_NAME
+};
 
 typedef struct window_data_s {
     xcb_window_t handle;
@@ -166,6 +174,25 @@ void window_destroy(Window window) {
 
 bool window_is_close_requested(Window window) {
     return window_xcb_windows_data[window].close_requested;
+}
+
+u32 window_enumerate_required_vulkan_extensions(Window window, const char **extensions) {
+    if (extensions) {
+        for (int i = 0; i < REQUIRED_VULKAN_EXTENSION_COUNT; i++) {
+            extensions[i] = window_required_vulkan_extensions[i];
+        }
+    }
+    return REQUIRED_VULKAN_EXTENSION_COUNT;
+}
+
+VkResult window_create_vulkan_surface(Window window, VkInstance instance, VkSurfaceKHR *surface) {
+    VkXcbSurfaceCreateInfoKHR surfaceCreateInfo = {};
+    surfaceCreateInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
+    surfaceCreateInfo.pNext = NULL;
+    surfaceCreateInfo.flags = 0;
+    surfaceCreateInfo.connection = window_xcb_connection;
+    surfaceCreateInfo.window = window_xcb_windows_data[window].handle;
+    return vkCreateXcbSurfaceKHR(instance, &surfaceCreateInfo, NULL, surface);
 }
 
 #endif

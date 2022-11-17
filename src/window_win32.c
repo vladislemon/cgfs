@@ -4,9 +4,17 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include <vulkan/vulkan_core.h>
+#include <vulkan/vulkan_win32.h>
 
 #define INVALID_WINDOW 0xFFFFFFFF
 #define MAX_WINDOW_COUNT 8
+#define REQUIRED_VULKAN_EXTENSION_COUNT 2
+
+const char *const window_required_vulkan_extensions[REQUIRED_VULKAN_EXTENSION_COUNT] = {
+        VK_KHR_SURFACE_EXTENSION_NAME,
+        VK_KHR_WIN32_SURFACE_EXTENSION_NAME
+};
 
 typedef struct window_data_s {
     HWND handle;
@@ -125,6 +133,25 @@ bool window_is_close_requested(Window window) {
         return false;
     }
     return window_win32_windows_data[window].close_requested;
+}
+
+u32 window_enumerate_required_vulkan_extensions(Window window, const char **extensions) {
+    if (extensions) {
+        for (int i = 0; i < REQUIRED_VULKAN_EXTENSION_COUNT; i++) {
+            extensions[i] = window_required_vulkan_extensions[i];
+        }
+    }
+    return REQUIRED_VULKAN_EXTENSION_COUNT;
+}
+
+VkResult window_create_vulkan_surface(Window window, VkInstance instance, VkSurfaceKHR *surface) {
+    VkWin32SurfaceCreateInfoKHR surfaceCreateInfo;
+    surfaceCreateInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+    surfaceCreateInfo.pNext = NULL;
+    surfaceCreateInfo.flags = 0;
+    surfaceCreateInfo.hinstance = window_win32_module_handle;
+    surfaceCreateInfo.hwnd = window_win32_windows_data[window].handle;
+    return vkCreateWin32SurfaceKHR(instance, &surfaceCreateInfo, NULL, surface);
 }
 
 #endif

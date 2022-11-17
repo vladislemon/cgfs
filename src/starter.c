@@ -4,6 +4,7 @@
 #include "thread.h"
 #include "mutex.h"
 #include "window.h"
+#include "renderer.h"
 
 const char *message = "Some message";
 
@@ -46,9 +47,12 @@ int cgfs_start() {
     mutex_destroy(&mutex);
 
     Window window = window_create(800, 600, "Hello from window");
+    Renderer renderer = renderer_create(window);
+    printf("Renderer: %d\n", renderer);
     while (!window_is_close_requested(window)) {
         window_global_wait_events();
     }
+    renderer_destroy(renderer);
     window_destroy(window);
 
     return 0;
