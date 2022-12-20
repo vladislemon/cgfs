@@ -60,6 +60,71 @@ VkResult renderer_vulkan_create_instance(RendererData *rendererData, Window wind
     return vkCreateInstance(&instanceCreateInfo, NULL, &rendererData->instance);
 }
 
+bool renderer_vulkan_is_physical_device_usable(RendererData *rendererData,
+                                               VkPhysicalDevice physicalDevice,
+                                               VkPhysicalDeviceType *pPhysicalDeviceType,
+                                               u32 *pGraphicsQueueFamilyIndex,
+                                               u32 *pPresentQueueFamilyIndex) {
+    u32 graphicsQueueFamilyIndex = -1;
+    u32 presentQueueFamilyIndex = -1;
+    u32 queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, NULL);
+    if (queueFamilyCount == 0) {
+        return false;
+    }
+    VkQueueFamilyProperties *pQueueFamilyProperties = malloc(sizeof(VkQueueFamilyProperties) * queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, pQueueFamilyProperties);
+    if (queueFamilyCount == 0) {
+        free(pQueueFamilyProperties);
+        return false;
+    }
+    for (int queueFamilyIndex = 0; queueFamilyIndex < queueFamilyCount; queueFamilyIndex++) {
+        if (graphicsQueueFamilyIndex == -1 &&
+            (pQueueFamilyProperties[queueFamilyIndex].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+            graphicsQueueFamilyIndex = queueFamilyIndex;
+        }
+        VkBool32 presentSupport = false;
+        vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, queueFamilyIndex, rendererData->surface,
+                                             &presentSupport);
+        if (presentSupport) {
+            presentQueueFamilyIndex = queueFamilyIndex;
+        }
+    }
+    free(pQueueFamilyProperties);
+    if (graphicsQueueFamilyIndex == -1 || presentQueueFamilyIndex == -1) {
+        return false;
+    }
+    u32 availableExtensionCount = 0;
+    vkEnumerateDeviceExtensionProperties(physicalDevice, NULL, &availableExtensionCount, NULL);
+    VkExtensionProperties *availableExtensions = malloc(sizeof(VkExtensionProperties) * availableExtensionCount);
+    vkEnumerateDeviceExtensionProperties(physicalDevice, NULL, &availableExtensionCount, availableExtensions);
+//        u32 requiredExtensionCount = window_enumerate_required_vulkan_extensions(window, NULL) + 1;
+    u32 requiredExtensionCount = 1;
+    const char *requiredExtensions[requiredExtensionCount];
+//        window_enumerate_required_vulkan_extensions(window, requiredExtensions);
+    requiredExtensions[requiredExtensionCount - 1] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+    u32 requiredExtensionFoundCount = 0;
+    for (int i = 0; i < requiredExtensionCount; i++) {
+        for (int j = 0; j < availableExtensionCount; j++) {
+            if (strcmp(requiredExtensions[i], availableExtensions[j].extensionName) == 0) {
+                requiredExtensionFoundCount++;
+            }
+        }
+    }
+    free(availableExtensions);
+    if (requiredExtensionFoundCount != requiredExtensionCount) {
+        return false;
+    }
+    VkPhysicalDeviceProperties properties;
+    VkPhysicalDeviceFeatures features;
+    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+    vkGetPhysicalDeviceFeatures(physicalDevice, &features);
+    *pPhysicalDeviceType = properties.deviceType;
+    *pGraphicsQueueFamilyIndex = graphicsQueueFamilyIndex;
+    *pPresentQueueFamilyIndex = presentQueueFamilyIndex;
+    return true;
+}
+
 VkResult renderer_vulkan_find_usable_physical_device(RendererData *rendererData, Window window) {
     u32 deviceCount = 0;
     VkResult result = vkEnumeratePhysicalDevices(rendererData->instance, &deviceCount, NULL);
@@ -80,69 +145,17 @@ VkResult renderer_vulkan_find_usable_physical_device(RendererData *rendererData,
         return VK_ERROR_UNKNOWN;
     }
     VkPhysicalDevice usablePhysicalDevice = NULL;
-    i32 graphicsQueueFamilyIndex = -1;
-    i32 presentQueueFamilyIndex = -1;
+    u32 graphicsQueueFamilyIndex;
+    u32 presentQueueFamilyIndex;
     for (int physicalDeviceIndex = 0; physicalDeviceIndex < deviceCount; physicalDeviceIndex++) {
         VkPhysicalDevice physicalDevice = physicalDevices[physicalDeviceIndex];
-        graphicsQueueFamilyIndex = -1;
-        presentQueueFamilyIndex = -1;
-        u32 queueFamilyCount = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, NULL);
-        if (queueFamilyCount == 0) {
-            continue;
-        }
-        VkQueueFamilyProperties *pQueueFamilyProperties = malloc(sizeof(VkQueueFamilyProperties) * queueFamilyCount);
-        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, pQueueFamilyProperties);
-        if (queueFamilyCount == 0) {
-            free(pQueueFamilyProperties);
-            continue;
-        }
-        for (int queueFamilyIndex = 0; queueFamilyIndex < queueFamilyCount; queueFamilyIndex++) {
-            if (graphicsQueueFamilyIndex == -1 &&
-                (pQueueFamilyProperties[queueFamilyIndex].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
-                graphicsQueueFamilyIndex = queueFamilyIndex;
-            }
-            VkBool32 presentSupport = false;
-            vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, queueFamilyIndex, rendererData->surface,
-                                                 &presentSupport);
-            if (presentSupport) {
-                presentQueueFamilyIndex = queueFamilyIndex;
-            }
-        }
-        free(pQueueFamilyProperties);
-        if (graphicsQueueFamilyIndex == -1 || presentQueueFamilyIndex == -1) {
-            continue;
-        }
-        u32 availableExtensionCount = 0;
-        vkEnumerateDeviceExtensionProperties(physicalDevice, NULL, &availableExtensionCount, NULL);
-        VkExtensionProperties *availableExtensions = malloc(sizeof(VkExtensionProperties) * availableExtensionCount);
-        vkEnumerateDeviceExtensionProperties(physicalDevice, NULL, &availableExtensionCount, availableExtensions);
-//        u32 requiredExtensionCount = window_enumerate_required_vulkan_extensions(window, NULL) + 1;
-        u32 requiredExtensionCount = 1;
-        const char *requiredExtensions[requiredExtensionCount];
-//        window_enumerate_required_vulkan_extensions(window, requiredExtensions);
-        requiredExtensions[requiredExtensionCount - 1] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
-        u32 requiredExtensionFoundCount = 0;
-        for (int i = 0; i < requiredExtensionCount; i++) {
-            for (int j = 0; j < availableExtensionCount; j++) {
-                if (strcmp(requiredExtensions[i], availableExtensions[j].extensionName) == 0) {
-                    requiredExtensionFoundCount++;
-                }
-            }
-        }
-        free(availableExtensions);
-        if (requiredExtensionFoundCount != requiredExtensionCount) {
-            continue;
-        }
-        VkPhysicalDeviceProperties properties;
-        VkPhysicalDeviceFeatures features;
-        vkGetPhysicalDeviceProperties(physicalDevice, &properties);
-        vkGetPhysicalDeviceFeatures(physicalDevice, &features);
-        if (properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+        VkPhysicalDeviceType physicalDeviceType;
+        if (renderer_vulkan_is_physical_device_usable(rendererData, physicalDevice, &physicalDeviceType,
+                                                      &graphicsQueueFamilyIndex, &presentQueueFamilyIndex)) {
             usablePhysicalDevice = physicalDevice;
-            break;
-        } else if (properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU && !usablePhysicalDevice) {
-            usablePhysicalDevice = physicalDevice;
+            if (physicalDeviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+                break;
+            }
         }
     }
     free(physicalDevices);
