@@ -1,13 +1,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include "renderer_vulkan.h"
 #include "window.h"
 
 #define INVALID_RENDERER 0xFFFFFFFF
+#define VULKAN_VALIDATION_LAYER_NAME "VK_LAYER_KHRONOS_validation"
 
 typedef struct renderer_data_s {
     VkInstance instance;
+    VkDebugUtilsMessengerEXT debugMessenger;
     VkSurfaceKHR surface;
     VkPhysicalDevice physicalDevice;
     u32 graphicsQueueFamilyIndex;
@@ -33,6 +36,16 @@ void renderer_vulkan_ensure_space_available() {
     }
 }
 
+VKAPI_ATTR VkBool32 VKAPI_CALL renderer_vulkan_debug_callback(
+        VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+        VkDebugUtilsMessageTypeFlagsEXT messageType,
+        const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
+        void *pUserData
+) {
+    printf("VK_VALIDATION: %s\n", pCallbackData->pMessage);
+    return VK_FALSE;
+}
+
 VkResult renderer_vulkan_create_instance(RendererData *rendererData, Window window) {
     VkApplicationInfo applicationInfo;
     applicationInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -43,21 +56,45 @@ VkResult renderer_vulkan_create_instance(RendererData *rendererData, Window wind
     applicationInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     applicationInfo.apiVersion = VK_API_VERSION_1_0;
 
-    u32 extension_count = window_enumerate_required_vulkan_extensions(window, NULL);
+    u32 extension_count = window_enumerate_required_vulkan_extensions(window, NULL) + 1;
     const char *extensions[extension_count];
     window_enumerate_required_vulkan_extensions(window, extensions);
+    extensions[extension_count - 1] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+
+    u32 layer_count = 1;
+    const char *layers[layer_count];
+    layers[0] = VULKAN_VALIDATION_LAYER_NAME;
 
     VkInstanceCreateInfo instanceCreateInfo;
     instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     instanceCreateInfo.pNext = NULL;
     instanceCreateInfo.flags = 0;
     instanceCreateInfo.pApplicationInfo = &applicationInfo;
-    instanceCreateInfo.enabledLayerCount = 0;
-    instanceCreateInfo.ppEnabledLayerNames = NULL;
+    instanceCreateInfo.enabledLayerCount = layer_count;
+    instanceCreateInfo.ppEnabledLayerNames = layers;
     instanceCreateInfo.enabledExtensionCount = extension_count;
     instanceCreateInfo.ppEnabledExtensionNames = extensions;
 
     return vkCreateInstance(&instanceCreateInfo, NULL, &rendererData->instance);
+}
+
+VkResult renderer_vulkan_create_debug_messenger(RendererData *rendererData) {
+    VkDebugUtilsMessengerCreateInfoEXT debugMessengerCreateInfo;
+    debugMessengerCreateInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    debugMessengerCreateInfo.pNext = NULL;
+    debugMessengerCreateInfo.flags = 0;
+    debugMessengerCreateInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    debugMessengerCreateInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    debugMessengerCreateInfo.pfnUserCallback = renderer_vulkan_debug_callback;
+    debugMessengerCreateInfo.pUserData = NULL;
+    PFN_vkCreateDebugUtilsMessengerEXT func = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(
+            rendererData->instance, "vkCreateDebugUtilsMessengerEXT");
+    VkResult result = func(rendererData->instance, &debugMessengerCreateInfo, NULL, &rendererData->debugMessenger);
+    return result;
 }
 
 bool renderer_vulkan_is_physical_device_usable(RendererData *rendererData,
@@ -204,6 +241,7 @@ u32 renderer_vulkan_get_unique_u32(u32 *result, u32 num, ...) {
 VkResult renderer_vulkan_create_device(RendererData *rendererData) {
     u32 queueFamilyIndices[2];
     u32 queueCreateInfoCount = renderer_vulkan_get_unique_u32(queueFamilyIndices,
+                                                              2,
                                                               rendererData->graphicsQueueFamilyIndex,
                                                               rendererData->presentQueueFamilyIndex);
     VkDeviceQueueCreateInfo queueCreateInfos[queueCreateInfoCount];
@@ -237,6 +275,9 @@ Renderer renderer_create(Window window) {
     if (renderer_vulkan_create_instance(rendererData, window) != VK_SUCCESS) {
         return INVALID_RENDERER;
     }
+    if (renderer_vulkan_create_debug_messenger(rendererData) != VK_SUCCESS) {
+        return INVALID_RENDERER;
+    }
     if (window_create_vulkan_surface(window, rendererData->instance, &rendererData->surface) != VK_SUCCESS) {
         return INVALID_RENDERER;
     }
@@ -256,5 +297,9 @@ void renderer_destroy(Renderer renderer) {
         return;
     }
     vkDestroyDevice(renderer_vulkan_renderers_data[renderer].device, NULL);
+    vkDestroySurfaceKHR(renderer_vulkan_renderers_data[renderer].instance, renderer_vulkan_renderers_data[renderer].surface, NULL);
+    PFN_vkDestroyDebugUtilsMessengerEXT destroyDebugMessengerFunc = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(
+            renderer_vulkan_renderers_data[renderer].instance, "vkDestroyDebugUtilsMessengerEXT");
+    destroyDebugMessengerFunc(renderer_vulkan_renderers_data[renderer].instance, renderer_vulkan_renderers_data[renderer].debugMessenger, NULL);
     vkDestroyInstance(renderer_vulkan_renderers_data[renderer].instance, NULL);
 }
