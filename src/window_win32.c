@@ -20,6 +20,8 @@ typedef struct window_data_s {
     HWND handle;
     WNDCLASSEX class;
     bool close_requested;
+    u16 width;
+    u16 height;
 } WindowData;
 
 HINSTANCE window_win32_module_handle = 0;
@@ -70,6 +72,12 @@ LRESULT CALLBACK window_win32_window_function(HWND handle, UINT message, WPARAM 
             ValidateRect(handle, NULL);
             break;
         }
+        case WM_SIZE: {
+            Window window = window_win32_get_window_by_handle(handle);
+            window_win32_windows_data[window].width = LOWORD(lParam);
+            window_win32_windows_data[window].height = HIWORD(lParam);
+            break;
+        }
         default: {
             return DefWindowProc(handle, message, wParam, lParam);
         }
@@ -112,6 +120,8 @@ Window window_create(u16 width, u16 height, const char *title) {
             NULL
     );
     window_data->close_requested = false;
+    window_data->width = width;
+    window_data->height = height;
     ShowWindow(window_data->handle, SW_SHOW);
     return window_win32_window_count++;
 }
@@ -152,6 +162,11 @@ VkResult window_create_vulkan_surface(Window window, VkInstance instance, VkSurf
     surfaceCreateInfo.hinstance = window_win32_module_handle;
     surfaceCreateInfo.hwnd = window_win32_windows_data[window].handle;
     return vkCreateWin32SurfaceKHR(instance, &surfaceCreateInfo, NULL, surface);
+}
+
+void window_get_size_in_pixels(Window window, u32 *width, u32 *height) {
+    *width = window_win32_windows_data[window].width;
+    *height = window_win32_windows_data[window].height;
 }
 
 #endif
