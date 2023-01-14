@@ -18,9 +18,10 @@ void *second_thread_entry_point(void *arg) {
     mutex_unlock(&mutex);
     printf("Mutex unlocked in second thread\n");
     thread_exit(12345);
+    return NULL;
 }
 
-int cgfs_start() {
+void test_socket() {
     socket_global_init();
     Socket sock = socket_create(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     struct addrinfo *address_info;
@@ -30,7 +31,9 @@ int cgfs_start() {
     socket_shutdown(sock, SHUT_RDWR);
     socket_close(sock);
     socket_global_destroy();
+}
 
+void test_concurrency() {
     mutex_init(&mutex);
     Thread thread = thread_create(second_thread_entry_point, (void *) message);
 
@@ -45,8 +48,11 @@ int cgfs_start() {
     printf("%llu\n", thread_result);
 
     mutex_destroy(&mutex);
+}
 
-    Window window = window_create(800, 600, "Hello from window");
+int cgfs_start() {
+    Window window = window_create(800, 600, "cgfs");
+    window_global_wait_events();
     Renderer renderer = renderer_create(window);
     printf("Renderer: %d\n", renderer);
     while (!window_is_close_requested(window)) {

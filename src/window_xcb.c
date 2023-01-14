@@ -23,6 +23,8 @@ typedef struct window_data_s {
     xcb_window_t handle;
     xcb_atom_t delete_atom;
     bool close_requested;
+    u16 width;
+    u16 height;
 } WindowData;
 
 xcb_connection_t *window_xcb_connection = 0;
@@ -54,6 +56,17 @@ bool window_xcb_handle_event(xcb_generic_event_t *event) {
             Window window = get_window_by_handle(client_message_event->window);
             if (client_message_event->data.data32[0] == window_xcb_windows_data[window].delete_atom) {
                 window_xcb_windows_data[window].close_requested = true;
+            }
+            break;
+        }
+        case XCB_RESIZE_REQUEST: {
+            xcb_resize_request_event_t *resize_request_event = (xcb_resize_request_event_t *) event;
+            Window window = get_window_by_handle(resize_request_event->window);
+            if (resize_request_event->width > 0) {
+                window_xcb_windows_data[window].width = resize_request_event->width;
+            }
+            if (resize_request_event->height > 0) {
+                window_xcb_windows_data[window].height = resize_request_event->height;
             }
             break;
         }
@@ -125,8 +138,10 @@ Window window_create(u16 width, u16 height, const char *title) {
     }
     window_xcb_windows_data[window_xcb_window_count].handle = xcb_generate_id(window_xcb_connection);
     window_xcb_windows_data[window_xcb_window_count].close_requested = false;
+    window_xcb_windows_data[window_xcb_window_count].width = width;
+    window_xcb_windows_data[window_xcb_window_count].height = height;
     u32 eventMask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
-    u32 valueList[] = {window_xcb_screen->black_pixel, 0};
+    u32 valueList[] = {window_xcb_screen->black_pixel, XCB_EVENT_MASK_RESIZE_REDIRECT};
     xcb_create_window(
             window_xcb_connection,
             window_xcb_screen->root_depth,
@@ -145,6 +160,16 @@ Window window_create(u16 width, u16 height, const char *title) {
             XCB_PROP_MODE_REPLACE,
             window_xcb_windows_data[window_xcb_window_count].handle,
             XCB_ATOM_WM_NAME,
+            XCB_ATOM_STRING,
+            8,
+            strlen(title),
+            title
+    );
+    xcb_change_property(
+            window_xcb_connection,
+            XCB_PROP_MODE_REPLACE,
+            window_xcb_windows_data[window_xcb_window_count].handle,
+            XCB_ATOM_WM_CLASS,
             XCB_ATOM_STRING,
             8,
             strlen(title),
@@ -193,6 +218,11 @@ VkResult window_create_vulkan_surface(Window window, VkInstance instance, VkSurf
     surfaceCreateInfo.connection = window_xcb_connection;
     surfaceCreateInfo.window = window_xcb_windows_data[window].handle;
     return vkCreateXcbSurfaceKHR(instance, &surfaceCreateInfo, NULL, surface);
+}
+
+void window_get_size_in_pixels(Window window, u32 *width, u32 *height) {
+    *width = window_xcb_windows_data[window].width;
+    *height = window_xcb_windows_data[window].height;
 }
 
 #endif

@@ -18,6 +18,13 @@ typedef struct renderer_data_s {
     VkDevice device;
     VkQueue graphicsQueue;
     VkQueue presentQueue;
+    VkSurfaceFormatKHR surfaceFormat;
+    VkPresentModeKHR presentMode;
+    VkExtent2D swapExtent;
+    VkSwapchainKHR swapchain;
+    u32 swapchainImageCount;
+    VkImage *swapchainImages;
+    VkImageView *swapchainImageViews;
 } RendererData;
 
 Renderer renderer_vulkan_renderer_limit = 0;
@@ -37,10 +44,10 @@ void renderer_vulkan_ensure_space_available() {
 }
 
 VKAPI_ATTR VkBool32 VKAPI_CALL renderer_vulkan_debug_callback(
-        VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-        VkDebugUtilsMessageTypeFlagsEXT messageType,
+        __attribute__((unused)) VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+        __attribute__((unused)) VkDebugUtilsMessageTypeFlagsEXT messageType,
         const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
-        void *pUserData
+        __attribute__((unused)) void *pUserData
 ) {
     printf("VK_VALIDATION: %s\n", pCallbackData->pMessage);
     return VK_FALSE;
@@ -84,11 +91,11 @@ VkResult renderer_vulkan_create_debug_messenger(RendererData *rendererData) {
     debugMessengerCreateInfo.pNext = NULL;
     debugMessengerCreateInfo.flags = 0;
     debugMessengerCreateInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
-            VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-            VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+                                               VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                               VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
     debugMessengerCreateInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-            VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-            VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+                                           VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                           VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
     debugMessengerCreateInfo.pfnUserCallback = renderer_vulkan_debug_callback;
     debugMessengerCreateInfo.pUserData = NULL;
     PFN_vkCreateDebugUtilsMessengerEXT func = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(
@@ -97,11 +104,61 @@ VkResult renderer_vulkan_create_debug_messenger(RendererData *rendererData) {
     return result;
 }
 
+bool renderer_vulkan_choose_swap_surface_format(RendererData *rendererData, VkPhysicalDevice physicalDevice,
+                                                VkSurfaceFormatKHR *pSurfaceFormat) {
+    u32 surfaceFormatCount;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, rendererData->surface, &surfaceFormatCount, NULL);
+    if (surfaceFormatCount < 1) {
+        return false;
+    }
+    VkSurfaceFormatKHR *surfaceFormats = malloc(sizeof(VkSurfaceFormatKHR) * surfaceFormatCount);
+    if (surfaceFormats == NULL) {
+        return false;
+    }
+    vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, rendererData->surface, &surfaceFormatCount, surfaceFormats);
+    for (int i = 0; i < surfaceFormatCount; i++) {
+        VkSurfaceFormatKHR availableFormat = surfaceFormats[i];
+        if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
+            availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            *pSurfaceFormat = availableFormat;
+            break;
+        }
+    }
+    free(surfaceFormats);
+    return true;
+}
+
+bool renderer_vulkan_choose_swap_present_mode(RendererData *rendererData, VkPhysicalDevice physicalDevice,
+                                              VkPresentModeKHR *pPresentMode) {
+    *pPresentMode = VK_PRESENT_MODE_FIFO_KHR;
+    u32 presentModeCount;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, rendererData->surface, &presentModeCount, NULL);
+    if (presentModeCount < 1) {
+        return false;
+    }
+    VkPresentModeKHR *presentModes = malloc(sizeof(VkPresentModeKHR) * presentModeCount);
+    if (presentModes == NULL) {
+        return false;
+    }
+    vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, rendererData->surface, &presentModeCount, presentModes);
+    for (int i = 0; i < presentModeCount; i++) {
+        VkPresentModeKHR availableMode = presentModes[i];
+        if (availableMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+            *pPresentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+            break;
+        }
+    }
+    free(presentModes);
+    return true;
+}
+
 bool renderer_vulkan_is_physical_device_usable(RendererData *rendererData,
                                                VkPhysicalDevice physicalDevice,
                                                VkPhysicalDeviceType *pPhysicalDeviceType,
                                                u32 *pGraphicsQueueFamilyIndex,
-                                               u32 *pPresentQueueFamilyIndex) {
+                                               u32 *pPresentQueueFamilyIndex,
+                                               VkSurfaceFormatKHR *pSurfaceFormat,
+                                               VkPresentModeKHR *pPresentMode) {
     u32 graphicsQueueFamilyIndex = -1;
     u32 presentQueueFamilyIndex = -1;
     u32 queueFamilyCount = 0;
@@ -121,9 +178,8 @@ bool renderer_vulkan_is_physical_device_usable(RendererData *rendererData,
             graphicsQueueFamilyIndex = queueFamilyIndex;
         }
         VkBool32 presentSupport = false;
-        vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, queueFamilyIndex, rendererData->surface,
-                                             &presentSupport);
-        if (presentSupport) {
+        vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, queueFamilyIndex, rendererData->surface, &presentSupport);
+        if (presentQueueFamilyIndex == -1 && presentSupport) {
             presentQueueFamilyIndex = queueFamilyIndex;
         }
     }
@@ -152,6 +208,16 @@ bool renderer_vulkan_is_physical_device_usable(RendererData *rendererData,
     if (requiredExtensionFoundCount != requiredExtensionCount) {
         return false;
     }
+    bool validSurfaceFormatAvailable = renderer_vulkan_choose_swap_surface_format(rendererData, physicalDevice,
+                                                                                  pSurfaceFormat);
+    if (!validSurfaceFormatAvailable) {
+        return false;
+    }
+    bool validPresentModeAvailable = renderer_vulkan_choose_swap_present_mode(rendererData, physicalDevice,
+                                                                              pPresentMode);
+    if (!validPresentModeAvailable) {
+        return false;
+    }
     VkPhysicalDeviceProperties properties;
     VkPhysicalDeviceFeatures features;
     vkGetPhysicalDeviceProperties(physicalDevice, &properties);
@@ -162,7 +228,7 @@ bool renderer_vulkan_is_physical_device_usable(RendererData *rendererData,
     return true;
 }
 
-VkResult renderer_vulkan_find_usable_physical_device(RendererData *rendererData, Window window) {
+VkResult renderer_vulkan_find_usable_physical_device(RendererData *rendererData) {
     u32 deviceCount = 0;
     VkResult result = vkEnumeratePhysicalDevices(rendererData->instance, &deviceCount, NULL);
     if (result != VK_SUCCESS) {
@@ -184,11 +250,14 @@ VkResult renderer_vulkan_find_usable_physical_device(RendererData *rendererData,
     VkPhysicalDevice usablePhysicalDevice = NULL;
     u32 graphicsQueueFamilyIndex;
     u32 presentQueueFamilyIndex;
+    VkSurfaceFormatKHR surfaceFormat;
+    VkPresentModeKHR presentMode;
     for (int physicalDeviceIndex = 0; physicalDeviceIndex < deviceCount; physicalDeviceIndex++) {
         VkPhysicalDevice physicalDevice = physicalDevices[physicalDeviceIndex];
         VkPhysicalDeviceType physicalDeviceType;
         if (renderer_vulkan_is_physical_device_usable(rendererData, physicalDevice, &physicalDeviceType,
-                                                      &graphicsQueueFamilyIndex, &presentQueueFamilyIndex)) {
+                                                      &graphicsQueueFamilyIndex, &presentQueueFamilyIndex,
+                                                      &surfaceFormat, &presentMode)) {
             usablePhysicalDevice = physicalDevice;
             if (physicalDeviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
                 break;
@@ -200,6 +269,8 @@ VkResult renderer_vulkan_find_usable_physical_device(RendererData *rendererData,
         rendererData->physicalDevice = usablePhysicalDevice;
         rendererData->graphicsQueueFamilyIndex = graphicsQueueFamilyIndex;
         rendererData->presentQueueFamilyIndex = presentQueueFamilyIndex;
+        rendererData->surfaceFormat = surfaceFormat;
+        rendererData->presentMode = presentMode;
         return VK_SUCCESS;
     }
     return VK_ERROR_UNKNOWN;
@@ -217,7 +288,7 @@ void renderer_vulkan_init_device_queue_create_info(u32 queueFamilyIndex, u32 que
 }
 
 u32 renderer_vulkan_get_unique_u32(u32 *result, u32 num, ...) {
-    int i;
+    int i, uniqueCount = 1;
     va_list valist;
     va_start(valist, num);
     result[0] = va_arg(valist, u32);
@@ -232,10 +303,11 @@ u32 renderer_vulkan_get_unique_u32(u32 *result, u32 num, ...) {
         }
         if (unique) {
             result[i] = value;
+            uniqueCount++;
         }
     }
     va_end(valist);
-    return i;
+    return uniqueCount;
 }
 
 VkResult renderer_vulkan_create_device(RendererData *rendererData) {
@@ -269,6 +341,105 @@ VkResult renderer_vulkan_create_device(RendererData *rendererData) {
     return vkCreateDevice(rendererData->physicalDevice, &deviceCreateInfo, NULL, &rendererData->device);
 }
 
+void renderer_vulkan_choose_swap_extent(Window window, VkSurfaceCapabilitiesKHR *surfaceCapabilities,
+                                        VkExtent2D *extent) {
+    u32 width, height;
+    window_get_size_in_pixels(window, &width, &height);
+    if (width < surfaceCapabilities->minImageExtent.width) {
+        width = surfaceCapabilities->minImageExtent.width;
+    } else if (width > surfaceCapabilities->maxImageExtent.width) {
+        width = surfaceCapabilities->maxImageExtent.width;
+    }
+    if (height < surfaceCapabilities->minImageExtent.height) {
+        height = surfaceCapabilities->minImageExtent.height;
+    } else if (height > surfaceCapabilities->maxImageExtent.height) {
+        height = surfaceCapabilities->maxImageExtent.height;
+    }
+    extent->width = width;
+    extent->height = height;
+}
+
+u32 renderer_vulkan_choose_swap_image_count(VkSurfaceCapabilitiesKHR *surfaceCapabilities) {
+    u32 imageCount = 3;
+    if (imageCount < surfaceCapabilities->minImageCount) {
+        imageCount = surfaceCapabilities->minImageCount;
+    } else if (surfaceCapabilities->maxImageCount > 0 && imageCount > surfaceCapabilities->maxImageCount) {
+        imageCount = surfaceCapabilities->maxImageCount;
+    }
+    return imageCount;
+}
+
+VkResult renderer_vulkan_create_swapchain(RendererData *rendererData, Window window) {
+    VkSurfaceCapabilitiesKHR surfaceCapabilities;
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(rendererData->physicalDevice, rendererData->surface,
+                                              &surfaceCapabilities);
+    renderer_vulkan_choose_swap_extent(window, &surfaceCapabilities, &rendererData->swapExtent);
+    u32 imageCount = renderer_vulkan_choose_swap_image_count(&surfaceCapabilities);
+    VkSwapchainCreateInfoKHR swapchainCreateInfo;
+    swapchainCreateInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    swapchainCreateInfo.pNext = NULL;
+    swapchainCreateInfo.flags = 0;
+    swapchainCreateInfo.surface = rendererData->surface;
+    swapchainCreateInfo.minImageCount = imageCount;
+    swapchainCreateInfo.imageFormat = rendererData->surfaceFormat.format;
+    swapchainCreateInfo.imageColorSpace = rendererData->surfaceFormat.colorSpace;
+    swapchainCreateInfo.imageExtent = rendererData->swapExtent;
+    swapchainCreateInfo.imageArrayLayers = 1;
+    swapchainCreateInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    u32 queueFamilyIndices[] = {rendererData->graphicsQueueFamilyIndex, rendererData->presentQueueFamilyIndex};
+    if (queueFamilyIndices[0] != queueFamilyIndices[1]) {
+        swapchainCreateInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+        swapchainCreateInfo.queueFamilyIndexCount = 2;
+        swapchainCreateInfo.pQueueFamilyIndices = queueFamilyIndices;
+    } else {
+        swapchainCreateInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        swapchainCreateInfo.queueFamilyIndexCount = 0;
+        swapchainCreateInfo.pQueueFamilyIndices = NULL;
+    }
+    swapchainCreateInfo.preTransform = surfaceCapabilities.currentTransform;
+    swapchainCreateInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    swapchainCreateInfo.presentMode = rendererData->presentMode;
+    swapchainCreateInfo.clipped = VK_TRUE;
+    swapchainCreateInfo.oldSwapchain = VK_NULL_HANDLE;
+    VkResult result = vkCreateSwapchainKHR(rendererData->device, &swapchainCreateInfo, NULL, &rendererData->swapchain);
+    if (result != VK_SUCCESS) {
+        return result;
+    }
+    vkGetSwapchainImagesKHR(rendererData->device, rendererData->swapchain, &rendererData->swapchainImageCount, NULL);
+    rendererData->swapchainImages = malloc(sizeof(VkImage) * rendererData->swapchainImageCount);
+    return vkGetSwapchainImagesKHR(rendererData->device, rendererData->swapchain, &rendererData->swapchainImageCount,
+                                   rendererData->swapchainImages);
+}
+
+VkResult renderer_vulkan_create_swapchain_image_views(RendererData *rendererData) {
+    VkResult result = VK_SUCCESS;
+    rendererData->swapchainImageViews = malloc(sizeof(VkImageView) * rendererData->swapchainImageCount);
+    for (int i = 0; i < rendererData->swapchainImageCount; ++i) {
+        VkImageViewCreateInfo imageViewCreateInfo;
+        imageViewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        imageViewCreateInfo.pNext = NULL;
+        imageViewCreateInfo.flags = 0;
+        imageViewCreateInfo.image = rendererData->swapchainImages[i];
+        imageViewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        imageViewCreateInfo.format = rendererData->surfaceFormat.format;
+        imageViewCreateInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewCreateInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewCreateInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewCreateInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        imageViewCreateInfo.subresourceRange.baseMipLevel = 0;
+        imageViewCreateInfo.subresourceRange.levelCount = 1;
+        imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
+        imageViewCreateInfo.subresourceRange.layerCount = 1;
+        result = vkCreateImageView(rendererData->device, &imageViewCreateInfo, NULL,
+                                   &rendererData->swapchainImageViews[i]);
+        if (result != VK_SUCCESS) {
+            break;
+        }
+    }
+    return result;
+}
+
 Renderer renderer_create(Window window) {
     renderer_vulkan_ensure_space_available();
     RendererData *rendererData = &renderer_vulkan_renderers_data[renderer_vulkan_renderer_count];
@@ -281,10 +452,16 @@ Renderer renderer_create(Window window) {
     if (window_create_vulkan_surface(window, rendererData->instance, &rendererData->surface) != VK_SUCCESS) {
         return INVALID_RENDERER;
     }
-    if (renderer_vulkan_find_usable_physical_device(rendererData, window) != VK_SUCCESS) {
+    if (renderer_vulkan_find_usable_physical_device(rendererData) != VK_SUCCESS) {
         return INVALID_RENDERER;
     }
     if (renderer_vulkan_create_device(rendererData) != VK_SUCCESS) {
+        return INVALID_RENDERER;
+    }
+    if (renderer_vulkan_create_swapchain(rendererData, window) != VK_SUCCESS) {
+        return INVALID_RENDERER;
+    }
+    if (renderer_vulkan_create_swapchain_image_views(rendererData) != VK_SUCCESS) {
         return INVALID_RENDERER;
     }
     vkGetDeviceQueue(rendererData->device, rendererData->graphicsQueueFamilyIndex, 0, &rendererData->graphicsQueue);
@@ -296,10 +473,17 @@ void renderer_destroy(Renderer renderer) {
     if (renderer == INVALID_RENDERER) {
         return;
     }
-    vkDestroyDevice(renderer_vulkan_renderers_data[renderer].device, NULL);
-    vkDestroySurfaceKHR(renderer_vulkan_renderers_data[renderer].instance, renderer_vulkan_renderers_data[renderer].surface, NULL);
-    PFN_vkDestroyDebugUtilsMessengerEXT destroyDebugMessengerFunc = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(
-            renderer_vulkan_renderers_data[renderer].instance, "vkDestroyDebugUtilsMessengerEXT");
-    destroyDebugMessengerFunc(renderer_vulkan_renderers_data[renderer].instance, renderer_vulkan_renderers_data[renderer].debugMessenger, NULL);
-    vkDestroyInstance(renderer_vulkan_renderers_data[renderer].instance, NULL);
+    RendererData data = renderer_vulkan_renderers_data[renderer];
+    for (int i = 0; i < data.swapchainImageCount; ++i) {
+        vkDestroyImageView(data.device, data.swapchainImageViews[i], NULL);
+    }
+    free(data.swapchainImageViews);
+    free(data.swapchainImages);
+    vkDestroySwapchainKHR(data.device, data.swapchain, NULL);
+    vkDestroyDevice(data.device, NULL);
+    vkDestroySurfaceKHR(data.instance, data.surface, NULL);
+    PFN_vkDestroyDebugUtilsMessengerEXT destroyDebugMessengerFunc = (PFN_vkDestroyDebugUtilsMessengerEXT)
+            vkGetInstanceProcAddr(data.instance, "vkDestroyDebugUtilsMessengerEXT");
+    destroyDebugMessengerFunc(data.instance, data.debugMessenger, NULL);
+    vkDestroyInstance(data.instance, NULL);
 }
