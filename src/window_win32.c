@@ -122,8 +122,9 @@ Window window_create(u16 width, u16 height, const char *title) {
     window_data->close_requested = false;
     window_data->width = width;
     window_data->height = height;
+    window_win32_window_count++;
     ShowWindow(window_data->handle, SW_SHOW);
-    return window_win32_window_count++;
+    return window_win32_window_count - 1;
 }
 
 void window_destroy(Window window) {
