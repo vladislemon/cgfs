@@ -1,10 +1,12 @@
 #include "starter.h"
-#include <stdio.h>
 #include "socket.h"
 #include "thread.h"
 #include "mutex.h"
 #include "window.h"
 #include "renderer.h"
+#include "file.h"
+#include <stdio.h>
+#include <stdlib.h>
 
 const char *message = "Some message";
 
@@ -50,10 +52,46 @@ void test_concurrency() {
     mutex_destroy(&mutex);
 }
 
+usize shader_data_from_file(const char *path, u32 **data) {
+    usize length;
+    if (file_read_all_binary(path, &length, NULL) != 0) {
+        return 0;
+    }
+    *data = malloc((length / sizeof(u32) + 1) * sizeof(u32));
+    if (file_read_all_binary(path, &length, (u8 *) *data) != 0) {
+        free(*data);
+        return 0;
+    }
+    return length;
+}
+
+Renderer create_renderer(Window window) {
+    u32 *vertex_shader_spv;
+    usize vertex_shader_length = shader_data_from_file("shaders/shader.vert.spv", &vertex_shader_spv);
+    if (vertex_shader_length == 0) {
+        return -1;
+    }
+    u32 *fragment_shader_spv;
+    usize fragment_shader_length = shader_data_from_file("shaders/shader.frag.spv", &fragment_shader_spv);
+    if (fragment_shader_length == 0) {
+        return -1;
+    }
+    Renderer renderer = renderer_create(
+            window,
+            vertex_shader_length,
+            vertex_shader_spv,
+            fragment_shader_length,
+            fragment_shader_spv
+    );
+    free(fragment_shader_spv);
+    free(vertex_shader_spv);
+    return renderer;
+}
+
 int cgfs_start() {
     Window window = window_create(800, 600, "cgfs");
-    window_global_wait_events();
-    Renderer renderer = renderer_create(window);
+    window_global_poll_events();
+    Renderer renderer = create_renderer(window);
     printf("Renderer: %d\n", renderer);
     while (!window_is_close_requested(window)) {
         window_global_wait_events();

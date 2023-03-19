@@ -10,6 +10,8 @@
 #include <vulkan/vulkan_core.h>
 #include "types.h"
 
+void window_global_poll_events();
+
 void window_global_wait_events();
 
 Window window_create(u16 width, u16 height, const char *title);
