@@ -90,11 +90,11 @@ Renderer create_renderer(Window window) {
 
 int cgfs_start() {
     Window window = window_create(800, 600, "cgfs");
-    window_global_poll_events();
     Renderer renderer = create_renderer(window);
     printf("Renderer: %d\n", renderer);
     while (!window_is_close_requested(window)) {
         window_global_wait_events();
+        renderer_draw_frame(renderer);
     }
     renderer_destroy(renderer);
     window_destroy(window);

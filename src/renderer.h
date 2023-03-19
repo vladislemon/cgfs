@@ -14,4 +14,6 @@ Renderer renderer_create(
 
 void renderer_destroy(Renderer renderer);
 
+void renderer_draw_frame(Renderer renderer);
+
 #endif //CGFS_RENDERER_H

@@ -28,6 +28,12 @@ typedef struct renderer_data_s {
     VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
+    VkFramebuffer *swapchainFramebuffers;
+    VkCommandPool commandPool;
+    VkCommandBuffer commandBuffer;
+    VkSemaphore imageAvailableSemaphore;
+    VkSemaphore renderFinishedSemaphore;
+    VkFence inFlightFence;
 } RendererData;
 
 Renderer renderer_vulkan_renderer_limit = 0;
@@ -471,6 +477,15 @@ VkResult renderer_vulkan_create_render_pass(RendererData *rendererData) {
     subpassDescription.preserveAttachmentCount = 0;
     subpassDescription.pPreserveAttachments = NULL;
 
+    VkSubpassDependency subpassDependency;
+    subpassDependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    subpassDependency.dstSubpass = 0;
+    subpassDependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    subpassDependency.srcAccessMask = 0;
+    subpassDependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    subpassDependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    subpassDependency.dependencyFlags = 0;
+
     VkRenderPassCreateInfo renderPassCreateInfo;
     renderPassCreateInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     renderPassCreateInfo.pNext = NULL;
@@ -479,8 +494,8 @@ VkResult renderer_vulkan_create_render_pass(RendererData *rendererData) {
     renderPassCreateInfo.pAttachments = &attachmentDescription;
     renderPassCreateInfo.subpassCount = 1;
     renderPassCreateInfo.pSubpasses = &subpassDescription;
-    renderPassCreateInfo.dependencyCount = 0;
-    renderPassCreateInfo.pDependencies = NULL;
+    renderPassCreateInfo.dependencyCount = 1;
+    renderPassCreateInfo.pDependencies = &subpassDependency;
 
     return vkCreateRenderPass(rendererData->device, &renderPassCreateInfo, NULL, &rendererData->renderPass);
 }
@@ -563,10 +578,8 @@ VkResult renderer_vulkan_create_graphics_pipeline(
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
 
-    VkOffset2D offset;
-    offset.x = 0;
-    offset.y = 0;
     VkRect2D scissor;
+    VkOffset2D offset = {0, 0};
     scissor.offset = offset;
     scissor.extent = rendererData->swapExtent;
 
@@ -674,6 +687,71 @@ VkResult renderer_vulkan_create_graphics_pipeline(
     return result;
 }
 
+VkResult renderer_vulkan_create_framebuffers(RendererData *rendererData) {
+    rendererData->swapchainFramebuffers = malloc(sizeof(VkFramebuffer) * rendererData->swapchainImageCount);
+    for (int i = 0; i < rendererData->swapchainImageCount; i++) {
+        VkFramebufferCreateInfo framebufferCreateInfo;
+        framebufferCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferCreateInfo.pNext = NULL;
+        framebufferCreateInfo.flags = 0;
+        framebufferCreateInfo.renderPass = rendererData->renderPass;
+        framebufferCreateInfo.attachmentCount = 1;
+        framebufferCreateInfo.pAttachments = &rendererData->swapchainImageViews[i];
+        framebufferCreateInfo.width = rendererData->swapExtent.width;
+        framebufferCreateInfo.height = rendererData->swapExtent.height;
+        framebufferCreateInfo.layers = 1;
+        VkResult result = vkCreateFramebuffer(rendererData->device, &framebufferCreateInfo, NULL,
+                                              &rendererData->swapchainFramebuffers[i]);
+        if (result != VK_SUCCESS) {
+            return result;
+        }
+    }
+    return VK_SUCCESS;
+}
+
+VkResult renderer_vulkan_create_command_pool(RendererData *rendererData) {
+    VkCommandPoolCreateInfo commandPoolCreateInfo;
+    commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    commandPoolCreateInfo.pNext = NULL;
+    commandPoolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    commandPoolCreateInfo.queueFamilyIndex = rendererData->graphicsQueueFamilyIndex;
+    return vkCreateCommandPool(rendererData->device, &commandPoolCreateInfo, NULL, &rendererData->commandPool);
+}
+
+VkResult renderer_vulkan_create_command_buffer(RendererData *rendererData) {
+    VkCommandBufferAllocateInfo commandBufferAllocateInfo;
+    commandBufferAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    commandBufferAllocateInfo.pNext = NULL;
+    commandBufferAllocateInfo.commandPool = rendererData->commandPool;
+    commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    commandBufferAllocateInfo.commandBufferCount = 1;
+    return vkAllocateCommandBuffers(rendererData->device, &commandBufferAllocateInfo, &rendererData->commandBuffer);
+}
+
+VkResult renderer_vulkan_create_sync_objects(RendererData *rendererData) {
+    VkSemaphoreCreateInfo semaphoreCreateInfo;
+    semaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    semaphoreCreateInfo.pNext = NULL;
+    semaphoreCreateInfo.flags = 0;
+
+    VkFenceCreateInfo fenceCreateInfo;
+    fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceCreateInfo.pNext = NULL;
+    fenceCreateInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+    VkResult result = vkCreateSemaphore(rendererData->device, &semaphoreCreateInfo, NULL,
+                                        &rendererData->imageAvailableSemaphore);
+    if (result != VK_SUCCESS) {
+        return result;
+    }
+    result = vkCreateSemaphore(rendererData->device, &semaphoreCreateInfo, NULL,
+                               &rendererData->renderFinishedSemaphore);
+    if (result != VK_SUCCESS) {
+        return result;
+    }
+    return vkCreateFence(rendererData->device, &fenceCreateInfo, NULL, &rendererData->inFlightFence);
+}
+
 Renderer renderer_create(
         Window window,
         usize vertex_shader_length,
@@ -711,9 +789,104 @@ Renderer renderer_create(
                                                  fragment_shader_length, fragment_shader_spv) != VK_SUCCESS) {
         return INVALID_RENDERER;
     }
+    if (renderer_vulkan_create_framebuffers(rendererData) != VK_SUCCESS) {
+        return INVALID_RENDERER;
+    }
+    if (renderer_vulkan_create_command_pool(rendererData) != VK_SUCCESS) {
+        return INVALID_RENDERER;
+    }
+    if (renderer_vulkan_create_command_buffer(rendererData) != VK_SUCCESS) {
+        return INVALID_RENDERER;
+    }
+    if (renderer_vulkan_create_sync_objects(rendererData) != VK_SUCCESS) {
+        return INVALID_RENDERER;
+    }
     vkGetDeviceQueue(rendererData->device, rendererData->graphicsQueueFamilyIndex, 0, &rendererData->graphicsQueue);
     vkGetDeviceQueue(rendererData->device, rendererData->presentQueueFamilyIndex, 0, &rendererData->presentQueue);
     return renderer_vulkan_renderer_count++;
+}
+
+VkResult renderer_vulkan_record_command_buffer(RendererData *rendererData, uint32_t imageIndex) {
+    VkCommandBufferBeginInfo commandBufferBeginInfo;
+    commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    commandBufferBeginInfo.pNext = NULL;
+    commandBufferBeginInfo.flags = 0;
+    commandBufferBeginInfo.pInheritanceInfo = NULL;
+    VkResult result = vkBeginCommandBuffer(rendererData->commandBuffer, &commandBufferBeginInfo);
+    if (result != VK_SUCCESS) {
+        return result;
+    }
+    VkRenderPassBeginInfo renderPassBeginInfo;
+    renderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassBeginInfo.pNext = NULL;
+    renderPassBeginInfo.renderPass = rendererData->renderPass;
+    renderPassBeginInfo.framebuffer = rendererData->swapchainFramebuffers[imageIndex];
+    VkOffset2D renderAreaOffset = {0, 0};
+    renderPassBeginInfo.renderArea.offset = renderAreaOffset;
+    renderPassBeginInfo.renderArea.extent = rendererData->swapExtent;
+    VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+    renderPassBeginInfo.clearValueCount = 1;
+    renderPassBeginInfo.pClearValues = &clearColor;
+    vkCmdBeginRenderPass(rendererData->commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(rendererData->commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, rendererData->graphicsPipeline);
+
+    VkViewport viewport;
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float) rendererData->swapExtent.width;
+    viewport.height = (float) rendererData->swapExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(rendererData->commandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor;
+    VkOffset2D scissorOffset = {0, 0};
+    scissor.offset = scissorOffset;
+    scissor.extent = rendererData->swapExtent;
+    vkCmdSetScissor(rendererData->commandBuffer, 0, 1, &scissor);
+
+    vkCmdDraw(rendererData->commandBuffer, 3, 1, 0, 0);
+    vkCmdEndRenderPass(rendererData->commandBuffer);
+    return vkEndCommandBuffer(rendererData->commandBuffer);
+}
+
+void renderer_draw_frame(Renderer renderer) {
+    if (renderer == INVALID_RENDERER) {
+        return;
+    }
+    RendererData *rendererData = &renderer_vulkan_renderers_data[renderer];
+
+    vkWaitForFences(rendererData->device, 1, &rendererData->inFlightFence, VK_TRUE, UINT64_MAX);
+    vkResetFences(rendererData->device, 1, &rendererData->inFlightFence);
+    uint32_t imageIndex;
+    vkAcquireNextImageKHR(rendererData->device, rendererData->swapchain, UINT64_MAX,
+                          rendererData->imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+    vkResetCommandBuffer(rendererData->commandBuffer, 0);
+    renderer_vulkan_record_command_buffer(rendererData, imageIndex);
+
+    VkSubmitInfo submitInfo;
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.pNext = NULL;
+    VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = &rendererData->imageAvailableSemaphore;
+    submitInfo.pWaitDstStageMask = waitStages;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &rendererData->commandBuffer;
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &rendererData->renderFinishedSemaphore;
+    vkQueueSubmit(rendererData->graphicsQueue, 1, &submitInfo, rendererData->inFlightFence);
+
+    VkPresentInfoKHR presentInfo;
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentInfo.pNext = NULL;
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = &rendererData->renderFinishedSemaphore;
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = &rendererData->swapchain;
+    presentInfo.pImageIndices = &imageIndex;
+    presentInfo.pResults = NULL;
+    vkQueuePresentKHR(rendererData->presentQueue, &presentInfo);
 }
 
 void renderer_destroy(Renderer renderer) {
@@ -721,6 +894,15 @@ void renderer_destroy(Renderer renderer) {
         return;
     }
     RendererData data = renderer_vulkan_renderers_data[renderer];
+    vkDeviceWaitIdle(data.device);
+    vkDestroySemaphore(data.device, data.imageAvailableSemaphore, NULL);
+    vkDestroySemaphore(data.device, data.renderFinishedSemaphore, NULL);
+    vkDestroyFence(data.device, data.inFlightFence, NULL);
+    vkDestroyCommandPool(data.device, data.commandPool, NULL);
+    for (int i = 0; i < data.swapchainImageCount; i++) {
+        vkDestroyFramebuffer(data.device, data.swapchainFramebuffers[i], NULL);
+    }
+    free(data.swapchainFramebuffers);
     vkDestroyPipeline(data.device, data.graphicsPipeline, NULL);
     vkDestroyPipelineLayout(data.device, data.pipelineLayout, NULL);
     vkDestroyRenderPass(data.device, data.renderPass, NULL);
