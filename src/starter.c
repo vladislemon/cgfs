@@ -12,6 +12,13 @@ const char *message = "Some message";
 
 Mutex mutex;
 
+typedef struct cgfs_global_state_s {
+    Window window;
+    Renderer renderer;
+} CgfsGlobalState;
+
+static CgfsGlobalState cgfs_global_state;
+
 void *second_thread_entry_point(void *arg) {
     printf("%s\n", (const char *) arg);
     mutex_lock(&mutex);
@@ -88,16 +95,21 @@ Renderer create_renderer(Window window) {
     return renderer;
 }
 
+void size_callback(Window window, u32 width, u32 height) {
+    renderer_reload(cgfs_global_state.renderer);
+}
+
 int cgfs_start() {
-    Window window = window_create(800, 600, "cgfs");
-    Renderer renderer = create_renderer(window);
-    printf("Renderer: %d\n", renderer);
-    while (!window_is_close_requested(window)) {
+    cgfs_global_state.window = window_create(800, 600, "cgfs");
+    cgfs_global_state.renderer = create_renderer(cgfs_global_state.window);
+    printf("Renderer: %d\n", cgfs_global_state.renderer);
+    window_set_size_callback(cgfs_global_state.window, size_callback);
+    while (!window_is_close_requested(cgfs_global_state.window)) {
         window_global_wait_events();
-        renderer_draw_frame(renderer);
+        renderer_draw_frame(cgfs_global_state.renderer);
     }
-    renderer_destroy(renderer);
-    window_destroy(window);
+    renderer_destroy(cgfs_global_state.renderer);
+    window_destroy(cgfs_global_state.window);
 
     return 0;
 }

@@ -22,6 +22,7 @@ typedef struct window_data_s {
     bool close_requested;
     u16 width;
     u16 height;
+    void (*size_callback)(Window window, u32 width, u32 height);
 } WindowData;
 
 HINSTANCE window_win32_module_handle = 0;
@@ -74,8 +75,13 @@ LRESULT CALLBACK window_win32_window_function(HWND handle, UINT message, WPARAM 
         }
         case WM_SIZE: {
             Window window = window_win32_get_window_by_handle(handle);
-            window_win32_windows_data[window].width = LOWORD(lParam);
-            window_win32_windows_data[window].height = HIWORD(lParam);
+            u16 width = LOWORD(lParam);
+            u16 height = HIWORD(lParam);
+            window_win32_windows_data[window].width = width;
+            window_win32_windows_data[window].height = height;
+            if (window_win32_windows_data[window].size_callback != NULL) {
+                window_win32_windows_data[window].size_callback(window, width, height);
+            }
             break;
         }
         default: {
@@ -92,6 +98,7 @@ Window window_create(u16 width, u16 height, const char *title) {
     if (window_win32_window_count == 0) {
         window_win32_module_handle = GetModuleHandle(NULL);
         window_win32_windows_data = malloc(sizeof(WindowData) * MAX_WINDOW_COUNT);
+        memset(window_win32_windows_data, 0, sizeof(WindowData) * MAX_WINDOW_COUNT);
     }
     WindowData *window_data = &window_win32_windows_data[window_win32_window_count];
     window_data->class.cbSize = sizeof(WNDCLASSEX);
@@ -168,6 +175,10 @@ VkResult window_create_vulkan_surface(Window window, VkInstance instance, VkSurf
 void window_get_size_in_pixels(Window window, u32 *width, u32 *height) {
     *width = window_win32_windows_data[window].width;
     *height = window_win32_windows_data[window].height;
+}
+
+void window_set_size_callback(Window window, void (*callback)(Window window, u32 width, u32 height)) {
+    window_win32_windows_data[window].size_callback = callback;
 }
 
 #endif

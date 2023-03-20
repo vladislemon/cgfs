@@ -12,6 +12,8 @@ Renderer renderer_create(
         const u32 *fragment_shader_spv
 );
 
+void renderer_reload(Renderer renderer);
+
 void renderer_destroy(Renderer renderer);
 
 void renderer_draw_frame(Renderer renderer);

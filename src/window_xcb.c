@@ -25,6 +25,7 @@ typedef struct window_data_s {
     bool close_requested;
     u16 width;
     u16 height;
+    void (*size_callback)(Window window, u32 width, u32 height);
 } WindowData;
 
 xcb_connection_t *window_xcb_connection = 0;
@@ -62,11 +63,14 @@ bool window_xcb_handle_event(xcb_generic_event_t *event) {
         case XCB_RESIZE_REQUEST: {
             xcb_resize_request_event_t *resize_request_event = (xcb_resize_request_event_t *) event;
             Window window = get_window_by_handle(resize_request_event->window);
-            if (resize_request_event->width > 0) {
-                window_xcb_windows_data[window].width = resize_request_event->width;
-            }
-            if (resize_request_event->height > 0) {
-                window_xcb_windows_data[window].height = resize_request_event->height;
+            if (resize_request_event->width > 0 && resize_request_event->height > 0) {
+                u16 width = resize_request_event->width;
+                u16 height = resize_request_event->height;
+                window_xcb_windows_data[window].width = width;
+                window_xcb_windows_data[window].height = height;
+                if (window_xcb_windows_data[window].size_callback != NULL) {
+                    window_xcb_windows_data[window].size_callback(window, width, height);
+                }
             }
             break;
         }
@@ -223,6 +227,10 @@ VkResult window_create_vulkan_surface(Window window, VkInstance instance, VkSurf
 void window_get_size_in_pixels(Window window, u32 *width, u32 *height) {
     *width = window_xcb_windows_data[window].width;
     *height = window_xcb_windows_data[window].height;
+}
+
+void window_set_size_callback(Window window, void (*callback)(Window window, u32 width, u32 height)) {
+    window_xcb_windows_data[window].size_callback = callback;
 }
 
 #endif

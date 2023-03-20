@@ -26,4 +26,6 @@ VkResult window_create_vulkan_surface(Window window, VkInstance instance, VkSurf
 
 void window_get_size_in_pixels(Window window, u32 *width, u32 *height);
 
+void window_set_size_callback(Window window, void (*callback)(Window window, u32 width, u32 height));
+
 #endif //CGFS_WINDOW_H

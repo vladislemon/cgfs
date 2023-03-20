@@ -922,7 +922,6 @@ void renderer_draw_frame(Renderer renderer) {
     VkResult result = vkAcquireNextImageKHR(rendererData->device, rendererData->swapchain, UINT64_MAX,
                                             imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-        renderer_reload(renderer);
         return;
     }
     vkResetFences(rendererData->device, 1, &inFlightFence);
