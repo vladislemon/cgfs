@@ -7,6 +7,7 @@
 
 #define INVALID_RENDERER 0xFFFFFFFF
 #define VULKAN_VALIDATION_LAYER_NAME "VK_LAYER_KHRONOS_validation"
+#define MAX_FRAMES_IN_FLIGHT 2
 
 typedef struct renderer_data_s {
     VkInstance instance;
@@ -30,10 +31,11 @@ typedef struct renderer_data_s {
     VkPipeline graphicsPipeline;
     VkFramebuffer *swapchainFramebuffers;
     VkCommandPool commandPool;
-    VkCommandBuffer commandBuffer;
-    VkSemaphore imageAvailableSemaphore;
-    VkSemaphore renderFinishedSemaphore;
-    VkFence inFlightFence;
+    VkCommandBuffer *commandBuffers;
+    VkSemaphore *imageAvailableSemaphores;
+    VkSemaphore *renderFinishedSemaphores;
+    VkFence *inFlightFences;
+    u32 currentFrame;
 } RendererData;
 
 Renderer renderer_vulkan_renderer_limit = 0;
@@ -718,17 +720,22 @@ VkResult renderer_vulkan_create_command_pool(RendererData *rendererData) {
     return vkCreateCommandPool(rendererData->device, &commandPoolCreateInfo, NULL, &rendererData->commandPool);
 }
 
-VkResult renderer_vulkan_create_command_buffer(RendererData *rendererData) {
+VkResult renderer_vulkan_create_command_buffers(RendererData *rendererData) {
+    rendererData->commandBuffers = malloc(sizeof(VkCommandBuffer) * MAX_FRAMES_IN_FLIGHT);
     VkCommandBufferAllocateInfo commandBufferAllocateInfo;
     commandBufferAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     commandBufferAllocateInfo.pNext = NULL;
     commandBufferAllocateInfo.commandPool = rendererData->commandPool;
     commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    commandBufferAllocateInfo.commandBufferCount = 1;
-    return vkAllocateCommandBuffers(rendererData->device, &commandBufferAllocateInfo, &rendererData->commandBuffer);
+    commandBufferAllocateInfo.commandBufferCount = MAX_FRAMES_IN_FLIGHT;
+    return vkAllocateCommandBuffers(rendererData->device, &commandBufferAllocateInfo, rendererData->commandBuffers);
 }
 
 VkResult renderer_vulkan_create_sync_objects(RendererData *rendererData) {
+    rendererData->imageAvailableSemaphores = malloc(sizeof(VkSemaphore) * MAX_FRAMES_IN_FLIGHT);
+    rendererData->renderFinishedSemaphores = malloc(sizeof(VkSemaphore) * MAX_FRAMES_IN_FLIGHT);
+    rendererData->inFlightFences = malloc(sizeof(VkFence) * MAX_FRAMES_IN_FLIGHT);
+
     VkSemaphoreCreateInfo semaphoreCreateInfo;
     semaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     semaphoreCreateInfo.pNext = NULL;
@@ -739,17 +746,24 @@ VkResult renderer_vulkan_create_sync_objects(RendererData *rendererData) {
     fenceCreateInfo.pNext = NULL;
     fenceCreateInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-    VkResult result = vkCreateSemaphore(rendererData->device, &semaphoreCreateInfo, NULL,
-                                        &rendererData->imageAvailableSemaphore);
-    if (result != VK_SUCCESS) {
-        return result;
+    VkResult result;
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        result = vkCreateSemaphore(rendererData->device, &semaphoreCreateInfo, NULL,
+                                   &rendererData->imageAvailableSemaphores[i]);
+        if (result != VK_SUCCESS) {
+            return result;
+        }
+        result = vkCreateSemaphore(rendererData->device, &semaphoreCreateInfo, NULL,
+                                   &rendererData->renderFinishedSemaphores[i]);
+        if (result != VK_SUCCESS) {
+            return result;
+        }
+        result = vkCreateFence(rendererData->device, &fenceCreateInfo, NULL, &rendererData->inFlightFences[i]);
+        if (result != VK_SUCCESS) {
+            return result;
+        }
     }
-    result = vkCreateSemaphore(rendererData->device, &semaphoreCreateInfo, NULL,
-                               &rendererData->renderFinishedSemaphore);
-    if (result != VK_SUCCESS) {
-        return result;
-    }
-    return vkCreateFence(rendererData->device, &fenceCreateInfo, NULL, &rendererData->inFlightFence);
+    return VK_SUCCESS;
 }
 
 Renderer renderer_create(
@@ -795,24 +809,27 @@ Renderer renderer_create(
     if (renderer_vulkan_create_command_pool(rendererData) != VK_SUCCESS) {
         return INVALID_RENDERER;
     }
-    if (renderer_vulkan_create_command_buffer(rendererData) != VK_SUCCESS) {
+    if (renderer_vulkan_create_command_buffers(rendererData) != VK_SUCCESS) {
         return INVALID_RENDERER;
     }
     if (renderer_vulkan_create_sync_objects(rendererData) != VK_SUCCESS) {
         return INVALID_RENDERER;
     }
+    rendererData->currentFrame = 0;
     vkGetDeviceQueue(rendererData->device, rendererData->graphicsQueueFamilyIndex, 0, &rendererData->graphicsQueue);
     vkGetDeviceQueue(rendererData->device, rendererData->presentQueueFamilyIndex, 0, &rendererData->presentQueue);
     return renderer_vulkan_renderer_count++;
 }
 
 VkResult renderer_vulkan_record_command_buffer(RendererData *rendererData, uint32_t imageIndex) {
+    VkCommandBuffer commandBuffer = rendererData->commandBuffers[rendererData->currentFrame];
+
     VkCommandBufferBeginInfo commandBufferBeginInfo;
     commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     commandBufferBeginInfo.pNext = NULL;
     commandBufferBeginInfo.flags = 0;
     commandBufferBeginInfo.pInheritanceInfo = NULL;
-    VkResult result = vkBeginCommandBuffer(rendererData->commandBuffer, &commandBufferBeginInfo);
+    VkResult result = vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo);
     if (result != VK_SUCCESS) {
         return result;
     }
@@ -827,8 +844,8 @@ VkResult renderer_vulkan_record_command_buffer(RendererData *rendererData, uint3
     VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
     renderPassBeginInfo.clearValueCount = 1;
     renderPassBeginInfo.pClearValues = &clearColor;
-    vkCmdBeginRenderPass(rendererData->commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdBindPipeline(rendererData->commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, rendererData->graphicsPipeline);
+    vkCmdBeginRenderPass(commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, rendererData->graphicsPipeline);
 
     VkViewport viewport;
     viewport.x = 0.0f;
@@ -837,17 +854,17 @@ VkResult renderer_vulkan_record_command_buffer(RendererData *rendererData, uint3
     viewport.height = (float) rendererData->swapExtent.height;
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(rendererData->commandBuffer, 0, 1, &viewport);
+    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
     VkRect2D scissor;
     VkOffset2D scissorOffset = {0, 0};
     scissor.offset = scissorOffset;
     scissor.extent = rendererData->swapExtent;
-    vkCmdSetScissor(rendererData->commandBuffer, 0, 1, &scissor);
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-    vkCmdDraw(rendererData->commandBuffer, 3, 1, 0, 0);
-    vkCmdEndRenderPass(rendererData->commandBuffer);
-    return vkEndCommandBuffer(rendererData->commandBuffer);
+    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    vkCmdEndRenderPass(commandBuffer);
+    return vkEndCommandBuffer(commandBuffer);
 }
 
 void renderer_draw_frame(Renderer renderer) {
@@ -855,13 +872,17 @@ void renderer_draw_frame(Renderer renderer) {
         return;
     }
     RendererData *rendererData = &renderer_vulkan_renderers_data[renderer];
+    VkCommandBuffer commandBuffer = rendererData->commandBuffers[rendererData->currentFrame];
+    VkSemaphore imageAvailableSemaphore = rendererData->imageAvailableSemaphores[rendererData->currentFrame];
+    VkSemaphore renderFinishedSemaphore = rendererData->renderFinishedSemaphores[rendererData->currentFrame];
+    VkFence inFlightFence = rendererData->inFlightFences[rendererData->currentFrame];
 
-    vkWaitForFences(rendererData->device, 1, &rendererData->inFlightFence, VK_TRUE, UINT64_MAX);
-    vkResetFences(rendererData->device, 1, &rendererData->inFlightFence);
+    vkWaitForFences(rendererData->device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+    vkResetFences(rendererData->device, 1, &inFlightFence);
     uint32_t imageIndex;
-    vkAcquireNextImageKHR(rendererData->device, rendererData->swapchain, UINT64_MAX,
-                          rendererData->imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
-    vkResetCommandBuffer(rendererData->commandBuffer, 0);
+    vkAcquireNextImageKHR(rendererData->device, rendererData->swapchain, UINT64_MAX, imageAvailableSemaphore,
+                          VK_NULL_HANDLE, &imageIndex);
+    vkResetCommandBuffer(commandBuffer, 0);
     renderer_vulkan_record_command_buffer(rendererData, imageIndex);
 
     VkSubmitInfo submitInfo;
@@ -869,24 +890,26 @@ void renderer_draw_frame(Renderer renderer) {
     submitInfo.pNext = NULL;
     VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &rendererData->imageAvailableSemaphore;
+    submitInfo.pWaitSemaphores = &imageAvailableSemaphore;
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &rendererData->commandBuffer;
+    submitInfo.pCommandBuffers = &commandBuffer;
     submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &rendererData->renderFinishedSemaphore;
-    vkQueueSubmit(rendererData->graphicsQueue, 1, &submitInfo, rendererData->inFlightFence);
+    submitInfo.pSignalSemaphores = &renderFinishedSemaphore;
+    vkQueueSubmit(rendererData->graphicsQueue, 1, &submitInfo, inFlightFence);
 
     VkPresentInfoKHR presentInfo;
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.pNext = NULL;
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &rendererData->renderFinishedSemaphore;
+    presentInfo.pWaitSemaphores = &renderFinishedSemaphore;
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &rendererData->swapchain;
     presentInfo.pImageIndices = &imageIndex;
     presentInfo.pResults = NULL;
     vkQueuePresentKHR(rendererData->presentQueue, &presentInfo);
+
+    rendererData->currentFrame = (rendererData->currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
 void renderer_destroy(Renderer renderer) {
@@ -895,9 +918,14 @@ void renderer_destroy(Renderer renderer) {
     }
     RendererData data = renderer_vulkan_renderers_data[renderer];
     vkDeviceWaitIdle(data.device);
-    vkDestroySemaphore(data.device, data.imageAvailableSemaphore, NULL);
-    vkDestroySemaphore(data.device, data.renderFinishedSemaphore, NULL);
-    vkDestroyFence(data.device, data.inFlightFence, NULL);
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vkDestroySemaphore(data.device, data.imageAvailableSemaphores[i], NULL);
+        vkDestroySemaphore(data.device, data.renderFinishedSemaphores[i], NULL);
+        vkDestroyFence(data.device, data.inFlightFences[i], NULL);
+    }
+    free(data.imageAvailableSemaphores);
+    free(data.renderFinishedSemaphores);
+    free(data.inFlightFences);
     vkDestroyCommandPool(data.device, data.commandPool, NULL);
     for (int i = 0; i < data.swapchainImageCount; i++) {
         vkDestroyFramebuffer(data.device, data.swapchainFramebuffers[i], NULL);
